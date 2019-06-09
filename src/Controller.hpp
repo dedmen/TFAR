@@ -37,6 +37,7 @@ public:
 
 
     CachedValueMTS<bool> objectInterceptionEnabled;
+    CachedValueMTS<float> speakerDistance;
 
 
     std::mutex playersLock;

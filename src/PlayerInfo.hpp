@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "CachedVariable.hpp"
+#include "RadioInfo.hpp"
 
 
 struct PositionInfo {
@@ -23,6 +24,10 @@ public:
     void simulate();
     void updateIntervals();
     void sendToTeamspeak();
+    void updateRadios();
+    void grabRadios(auto_array<r_string>& radioData);
+
+
 
 
     std::shared_ptr<MainthreadScheduler> scheduler;
@@ -63,7 +68,8 @@ public:
 
     std::string unitName;
 
-
+    std::mutex radiosLock;
+    std::vector<std::shared_ptr<RadioInfo>> radios;
     CachedValueMTS<PositionInfo> position;
     CachedValueMTS<bool> isSpectating;
 
@@ -73,14 +79,11 @@ public:
     CachedValueMTS<float> terrainInterception;
     CachedValueMTS<float> objectInterception;
 
-  
-
+    CachedValueMTS<bool> radioUpdate;
 
     std::chrono::system_clock::time_point lastFullUpdate;
     std::chrono::system_clock::time_point lastUpdateSent;
 
     std::chrono::milliseconds updateSendDelay;
-
-
 };
 

@@ -3,11 +3,24 @@
 #include "CacheHelper.hpp"
 #include "Controller.hpp"
 
+static inline __itt_domain* PlayerInfoDomain = __itt_domain_create("PlayerInfo");
+
+static inline __itt_string_handle* PlayerInfo_grabRadios = __itt_string_handle_create("grabRadios");
+static inline __itt_string_handle* PlayerInfo_updateRadios = __itt_string_handle_create("updateRadios");
+
+
 std::chrono::milliseconds timeInterp(float value, std::chrono::milliseconds minTime, std::chrono::milliseconds maxTime, float minValue, float maxValue) {
     if (value < minValue) return minTime;
     if (value > maxValue) return maxTime;
 
     return std::chrono::duration_cast<std::chrono::milliseconds>(minTime + (maxTime - minTime) * (value - minValue) / (maxValue - minValue));
+}
+
+std::chrono::milliseconds timeInterp(std::chrono::milliseconds value, std::chrono::milliseconds minTime, std::chrono::milliseconds maxTime, std::chrono::milliseconds minValue, std::chrono::milliseconds maxValue) {
+    if (value < minValue) return minTime;
+    if (value > maxValue) return maxTime;
+
+    return std::chrono::milliseconds(minTime.count() + ((maxTime - minTime).count() * (value - minValue).count() / (maxValue - minValue).count()));
 }
 
 std::string vectorToString(const vector3& vec) {
@@ -82,7 +95,7 @@ void PlayerInfo::init() {
             if (auto lockedPlayer = player.lock()) //Only update if we are in a vehicle
                 return !lockedPlayer->unitParent->get().is_null();
             return false;
-    }, game_value{});
+    }, {});
     isolatedAndInside->setName(std::string("isolatedAndInside ") + unitName);
 
 
@@ -93,20 +106,26 @@ void PlayerInfo::init() {
             return intercept::sqf::call(TFAR_fnc_calcTerrainInterception, lockedPlayer->controlledUnit);
         }
         return {};
-        }, game_value{});
+        }, {});
     terrainInterception->setName(std::string("terrainInterception ") + unitName);
     
-    objectInterception = makeCachedVal<float>(50ms, [player]()->float {
+	//#TODO only update when talking
+    objectInterception = makeCachedVal<float>(100ms, [player]()->float {
         if (auto lockedPlayer = player.lock()) {
             auto TFAR_fnc_objectInterception = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_objectInterception"sv);
 
             return intercept::sqf::call(TFAR_fnc_objectInterception, lockedPlayer->controlledUnit);
         }
         return {};
-    }, game_value{});
+    }, {});
     objectInterception->setName(std::string("objectInterception ") + unitName);
 
-
+    radioUpdate = makeCachedVal<bool>(1s, [player]()->bool { //#TODO increase time if player doesn't have any
+        if (auto lockedPlayer = player.lock()) {
+            lockedPlayer->updateRadios();
+        }
+        return {};
+    }, {});
 
     //Immediately update vehicleID and isolatedAndInside on vehicle changed
     unitParent->addUpdateEventhandler([vehicleID = vehicleID->getWeak(), isolatedAndInside = isolatedAndInside->getWeak(), player = weak_from_this()](const object& newParent) {
@@ -117,21 +136,47 @@ void PlayerInfo::init() {
                 lockedISO->manualUpdate(lockedPlayer->getIsolatedAndInside());
         }
     });
+
+    updateSendDelay = 100ms;
+
+
+
+
+
+    positionFunc->forceUpdate();
+    position->forceUpdate();
+    isSpectating->forceUpdate();
+    unitParent->forceUpdate();
+    vehicleID->forceUpdate();
+    isolatedAndInside->forceUpdate();
+    terrainInterception->forceUpdate();
+    objectInterception->forceUpdate();
+    radioUpdate->forceUpdate();
 }
 
 void PlayerInfo::simulate() {
 
-    //if (std::chrono::system_clock::now() - lastUpdateSent > 100ms) {
+    if (std::chrono::system_clock::now() - lastUpdateSent > updateSendDelay) {
         ittScopeEvt sc(evt);
         sendToTeamspeak();
-    //}
-       
+        updateIntervals();
+    }
 }
 
 void PlayerInfo::updateIntervals() {
-    
+    auto currentUnit = Controller::get().currentUnit;
+    if (!currentUnit) return;
 
+    auto distance = currentUnit->position->get().eyePos.distance(position->get().eyePos);
+    auto now = std::chrono::system_clock::now();
 
+#define LAST_CHANGE(OBJ) std::chrono::duration_cast<std::chrono::milliseconds>(now - OBJ->getLastChange())
+
+    //#TODO move into cached value, and update interval on value update, or regularly
+    updateSendDelay = timeInterp(distance, 50ms, 5s, 5, 5000);
+    position->setInterval(timeInterp(distance, 50ms, 5s, 5, 5000));
+    terrainInterception->setInterval(timeInterp(LAST_CHANGE(terrainInterception), 2s, 5s, 2s, 20s));
+    objectInterception->setInterval(timeInterp(LAST_CHANGE(objectInterception), 100ms, 500ms, 1s, 5s));
 }
 
 void PlayerInfo::sendToTeamspeak() {
@@ -205,11 +250,11 @@ void PlayerInfo::sendToTeamspeak() {
     data += "\t";
     data += std::to_string(terrainInterception);
     data += "\t";
-    data += 1.f; //#TODO //_unit getVariable["tf_voiceVolume", 1.0]
+    data += "1"; //#TODO //_unit getVariable["tf_voiceVolume", 1.0]
     data += "\t";
     data += std::to_string(objectInterception);
     data += "\t";
-    data += isSpectating ? "1"sv : "0"sv;
+    data += isSpectating->get() ? "1"sv : "0"sv;
     data += "\t";
     data += isEnemy ? "1"sv : "0"sv;
 
@@ -224,9 +269,84 @@ void PlayerInfo::sendToTeamspeak() {
     //        _isSpectating, _isEnemy
     //];
 
-    Controller::get().networkHandler.doAsyncRequest(data);
+    //#TODO if data is same as last time, then only send every second
+
+    std::string answ;
+    Controller::get().networkHandler.doSyncRequest(data, answ);
 
     lastUpdateSent = std::chrono::system_clock::now();
+}
+
+void PlayerInfo::updateRadios() {
+    ittScope sc(PlayerInfoDomain, PlayerInfo_updateRadios);
+    MainthreadTester::checkNow();
+
+    auto TFAR_fnc_lrRadiosList = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_lrRadiosList"sv);
+    auto TFAR_fnc_radiosList = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_radiosList"sv);
+
+    auto_array<game_value> srRadiosGV = sqf::call(TFAR_fnc_radiosList, controlledUnit).to_array();
+    auto_array<game_value> lrRadiosGV = sqf::call(TFAR_fnc_lrRadiosList, controlledUnit).to_array();
+
+    for (auto& it : radios)
+        it->checkVar = false;
+
+
+    for (r_string radio : srRadiosGV) {
+        auto found = std::find_if(radios.begin(), radios.end(), [&radio](std::shared_ptr<RadioInfo>& rad) {
+            return !rad->isLR && rad->variable == radio;
+        });
+
+        if (found == radios.end()) {
+            auto& newRadio = radios.emplace_back(std::make_shared<RadioInfo>(scheduler, radio));
+            newRadio->checkVar = true;
+            newRadio->initValues();
+        } else {
+            (*found)->checkVar = true;
+        }
+    }
+
+    for (const game_value& radioGV : lrRadiosGV) {
+        object obj = radioGV[0];
+        r_string variable = radioGV[1];
+
+        auto found = std::find_if(radios.begin(), radios.end(), [&obj, &variable](std::shared_ptr<RadioInfo>& rad) {
+            return rad->isLR && rad->obj == obj && rad->variable == variable;
+            });
+
+        if (found == radios.end()) {
+            std::unique_lock lock(radiosLock);
+            auto& newRadio = radios.emplace_back(std::make_shared<RadioInfo>(scheduler, obj, variable));
+            newRadio->checkVar = true;
+            newRadio->initValues();
+        }
+        else {
+            (*found)->checkVar = true;
+        }
+    }
+
+    auto newEnd = std::remove_if(radios.begin(), radios.end(), [](const std::shared_ptr<RadioInfo>& info) {
+        return !info->checkVar;
+    });
+
+    if (newEnd != radios.end()) {
+        std::unique_lock lock(radiosLock);
+        radios.erase(newEnd, radios.end());
+    }
+
+}
+
+void PlayerInfo::grabRadios(auto_array<r_string>& radioData) {
+    ittScope sc(PlayerInfoDomain, PlayerInfo_grabRadios);
+    radioUpdate->get(); //trigger update
+
+    std::unique_lock lock(radiosLock);
+
+    for (auto& it : radios) {
+        if (!it->speakerEnabled->get()) continue;
+        if (it->frequencies->get().empty()) continue;
+
+        radioData.emplace_back(it->buildString(*this));
+    }
 }
 
 PositionInfo PlayerInfo::getPosition() const {

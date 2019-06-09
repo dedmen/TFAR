@@ -6,6 +6,7 @@ static inline __itt_domain* ControllerDomain = __itt_domain_create("Controller")
 
 static inline __itt_string_handle* Controller_processPlayerPositions = __itt_string_handle_create("processPlayerPositions");
 static inline __itt_string_handle* Controller_updatePlayerlist = __itt_string_handle_create("updatePlayerlist");
+static inline __itt_string_handle* Controller_sendSpeakers = __itt_string_handle_create("sendSpeakers");
 
 Controller::Controller() : playerUpdateScheduler(std::make_shared<MainthreadScheduler>()) {
     
@@ -13,6 +14,12 @@ Controller::Controller() : playerUpdateScheduler(std::make_shared<MainthreadSche
         return intercept::sqf::get_variable(sqf::mission_namespace(), "TFAR_objectInterceptionEnabled"sv);
     }, true);
 
+    speakerDistance = std::make_shared<CachedValueMT<float>>(playerUpdateScheduler, 2s, []() -> float {
+        return intercept::sqf::get_variable(sqf::mission_namespace(), "TF_speakerDistance"sv);
+    }, true);
+
+    objectInterceptionEnabled->forceUpdate();
+    speakerDistance->forceUpdate();
 }
 
 void Controller::preStart() {
@@ -40,6 +47,14 @@ void Controller::preInit() {
 }
 
 void Controller::processPlayerPositions() {
+    __itt_frame_begin_v3(ControllerDomain, NULL);
+
+    if (intercept::sqf::get_client_state_number() != 10) {
+        players.clear();
+        currentUnit.reset();
+        return;
+    }
+
     ittScope sc(ControllerDomain, Controller_processPlayerPositions);
     auto currentTime = std::chrono::system_clock::now();
 
@@ -65,10 +80,7 @@ void Controller::processPlayerPositions() {
 
 
     playerUpdateScheduler->executeTasks();
-
-
-
-
+    __itt_frame_end_v3(ControllerDomain, NULL);
 }
 
 void Controller::updatePlayerlist() {
@@ -104,8 +116,8 @@ void Controller::updatePlayerlist() {
     //    nearUnits.insert(crew.begin(), crew.end());
     //}
 
-    //auto currentPlayers = sqf::all_players();
-    auto currentPlayers = sqf::all_units();
+    auto currentPlayers = sqf::all_players();
+    //auto currentPlayers = sqf::all_units();
 
     
 
@@ -116,7 +128,7 @@ void Controller::updatePlayerlist() {
         });
 
         if (found == players.end()) {
-            std::unique_lock<std::mutex> lock(playersLock);
+            std::unique_lock lock(playersLock);
             auto& newPlayer = players.emplace_back(std::make_shared<PlayerInfo>(playerUpdateScheduler, it));
             newPlayer->init();
         }
@@ -127,7 +139,7 @@ void Controller::updatePlayerlist() {
         return info->unit.is_null();
         });
     if (newEnd != players.end()) {
-        std::unique_lock<std::mutex> lock(playersLock);
+        std::unique_lock lock(playersLock);
         players.erase(newEnd, players.end());
     }
     
@@ -135,7 +147,9 @@ void Controller::updatePlayerlist() {
 }
 
 void Controller::threadWork() {
-    
+    std::chrono::system_clock::time_point lastSpeakerUpdate;
+    std::string lastSpeakerInfo;
+
     while (true) {
         if (players.empty()) {
             std::this_thread::sleep_for(1s);
@@ -148,10 +162,32 @@ void Controller::threadWork() {
             it->simulate();
         }
 
+        if (std::chrono::system_clock::now() - lastSpeakerUpdate > 200ms) {
+            ittScope sc(ControllerDomain, Controller_sendSpeakers);
+            auto_array<r_string> radioData; //#TODO use std::string and vector
+
+            for (auto& it : players)
+                it->grabRadios(radioData);
+
+            //#TODO add ground radios from cached value in controller
+
+            std::string data;
+            data += "SPEAKERS\t";
+            for (auto& it : radioData) {
+                data += it;
+                data += "\xB";
+            }
+            if (!radioData.empty())
+                data.pop_back();
+            data += "~"; //async command
+
+            if (data != lastSpeakerInfo) //Don't bother teamspeak if nothing changed
+                networkHandler.doAsyncRequest(data);
+            lastSpeakerInfo = std::move(data);
+        }
+
+
         std::this_thread::sleep_for(1ms);
-
-
-
 
     }
 

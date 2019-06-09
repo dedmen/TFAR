@@ -58,9 +58,13 @@ template <class Type>
 class CachedValueMT : public std::enable_shared_from_this<CachedValueMT<Type>> {
 public:
     CachedValueMT(std::weak_ptr<MainthreadScheduler> scheduler, std::chrono::milliseconds interval, std::function<Type()> updateFunc, Type defaultValue) :
-        scheduler(std::move(scheduler)), updateFunc(std::move(updateFunc)), interval(interval), value(defaultValue) {}
+        scheduler(std::move(scheduler)), updateFunc(std::move(updateFunc)), interval(interval), value(defaultValue) {
+        lastChange = std::chrono::system_clock::now();
+    }
     CachedValueMT(std::weak_ptr<MainthreadScheduler> scheduler, std::chrono::milliseconds interval, std::function<Type()> updateFunc, std::function<bool()> canUpdate, Type defaultValue) :
-        scheduler(std::move(scheduler)), updateFunc(std::move(updateFunc)), canUpdate(canUpdate), interval(interval), value(defaultValue) {}
+        scheduler(std::move(scheduler)), updateFunc(std::move(updateFunc)), canUpdate(canUpdate), interval(interval), value(defaultValue) {
+        lastChange = std::chrono::system_clock::now();
+    }
 
     Type get() const {
         ittScope sc(CachedValueMTDomain, CachedValueMT_get);
@@ -68,7 +72,7 @@ public:
             doUpdate();
         }
 
-        std::unique_lock<std::recursive_mutex> lock(valueMutex);
+        std::unique_lock lock(valueMutex);
         return value;
     }
 
@@ -84,7 +88,7 @@ public:
 
     void manualUpdate(Type newValue, bool fireEvents = false) {
         if (lastUpdate != std::chrono::system_clock::time_point::max()) {
-            std::unique_lock<std::recursive_mutex> lock(valueMutex);
+            std::unique_lock lock(valueMutex);
             value = newValue;
             if (fireEvents)
                 onUpdate(newValue);
@@ -108,6 +112,11 @@ public:
 //#endif
     }
 
+    std::chrono::system_clock::time_point getLastChange() {
+        return lastChange;
+    }
+
+
 private:
 
     void doUpdate() const {
@@ -127,8 +136,11 @@ private:
                 std::shared_ptr<const CachedValueMT<Type>> lockedValue = value.lock();
                 if (!lockedValue) return;
                 auto newValue = lockedValue->updateFunc();
-                std::unique_lock<std::recursive_mutex> lock(lockedValue->valueMutex);
-                if (newValue != lockedValue->value)  lockedValue->onUpdate(newValue);
+                std::unique_lock lock(lockedValue->valueMutex);
+                if (newValue != lockedValue->value) {
+                    lockedValue->onUpdate(newValue);
+                    lockedValue->lastChange = std::chrono::system_clock::now();
+                }
                 lockedValue->value = newValue;
                 lockedValue->lastUpdate = std::chrono::system_clock::now();
             });
@@ -151,6 +163,7 @@ private:
     std::chrono::milliseconds interval;
 
     mutable std::chrono::system_clock::time_point lastUpdate;
+    mutable std::chrono::system_clock::time_point lastChange;
     mutable std::recursive_mutex valueMutex;
     mutable Type value;
     Signal<void(const Type&)> onUpdate;

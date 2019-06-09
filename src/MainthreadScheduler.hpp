@@ -15,13 +15,13 @@ public:
 
     void pushTask(std::function<void()>&& newTask) {
         ittScope sc(MainthreadSchedulerDomain, MainthreadScheduler_pushTask);
-        std::unique_lock<std::recursive_mutex> lock(accessMutex);
+        std::unique_lock lock(accessMutex);
         tasks.emplace_back(std::move(newTask));
     }
     void executeTasks() {
         ittScope sc(MainthreadSchedulerDomain, MainthreadScheduler_executeTasks);
         MainthreadTester::checkNow();
-        std::unique_lock<std::recursive_mutex> lock(accessMutex);
+        std::unique_lock lock(accessMutex);
         auto taskMove = std::move(tasks); //Executing tasks might push more tasks which might clear memory
         lock.unlock();//We moved and cleared tasks, don't need anymore
 
