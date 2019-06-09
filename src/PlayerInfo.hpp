@@ -19,7 +19,7 @@ struct PositionInfo {
 class PlayerInfo : public std::enable_shared_from_this<PlayerInfo> {
 public:
     PlayerInfo(std::shared_ptr<MainthreadScheduler> scheduler, object unit);
-
+    void init();
     void simulate();
     void updateIntervals();
     void sendToTeamspeak();
@@ -57,7 +57,7 @@ public:
     object controlledUnit;
     object unit;
     bool isCurrentUnit = false;
-
+    __itt_event evt;
 
 
 
@@ -70,6 +70,8 @@ public:
     CachedValueMTS<object> unitParent; //#TODO forceUpdate on controlledUnit change
     CachedValueMTS<r_string> vehicleID;
     CachedValueMTS<bool> isolatedAndInside;
+    CachedValueMTS<float> terrainInterception;
+    CachedValueMTS<float> objectInterception;
 
   
 

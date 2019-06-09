@@ -37,7 +37,17 @@ SOURCE_GROUP("intercept" FILES ${INTERCEPT_HOST_SOURCES})
 
 add_library( ${INTERCEPT_PLUGIN_NAME} SHARED ${INTERCEPT_PLUGIN_SOURCES} ${INTERCEPT_HOST_SOURCES})
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${INTERCEPT_INCLUDE_PATH})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${INTERCEPT_INCLUDE_PATH} "${CMAKE_SOURCE_DIR}/lib/ittnotify")
+
+#if(ITT_INSTRUMENTATION)
+#    find_library(libittnotify NAMES ittnotify PATHS ${CMAKE_SOURCE_DIR}/lib/ittnotify NO_DEFAULT_PATH)
+    set(libittnotify "${CMAKE_SOURCE_DIR}/lib/ittnotify/libittnotify.lib")
+#else()
+#    set(libittnotify "")
+#    add_compile_definitions(INTEL_NO_ITTNOTIFY_API)
+#endif()
+
+target_link_libraries(${INTERCEPT_PLUGIN_NAME} ${libittnotify})
 
 set_target_properties(${INTERCEPT_PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${INTERCEPT_PLUGIN_NAME} PROPERTIES FOLDER "${CMAKE_PROJECT_NAME}")

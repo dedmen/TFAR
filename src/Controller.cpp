@@ -2,6 +2,11 @@
 #include <unordered_set>
 #include <future>
 
+static inline __itt_domain* ControllerDomain = __itt_domain_create("Controller");
+
+static inline __itt_string_handle* Controller_processPlayerPositions = __itt_string_handle_create("processPlayerPositions");
+static inline __itt_string_handle* Controller_updatePlayerlist = __itt_string_handle_create("updatePlayerlist");
+
 Controller::Controller() : playerUpdateScheduler(std::make_shared<MainthreadScheduler>()) {
     
     objectInterceptionEnabled = std::make_shared<CachedValueMT<bool>>(playerUpdateScheduler, 2s, []() -> bool {
@@ -35,6 +40,7 @@ void Controller::preInit() {
 }
 
 void Controller::processPlayerPositions() {
+    ittScope sc(ControllerDomain, Controller_processPlayerPositions);
     auto currentTime = std::chrono::system_clock::now();
 
     if (currentTime - lastPlayerlistUpdate > 1s)
@@ -66,6 +72,7 @@ void Controller::processPlayerPositions() {
 }
 
 void Controller::updatePlayerlist() {
+    ittScope sc(ControllerDomain, Controller_updatePlayerlist);
     //In mainthread
 
     //Get near players
@@ -97,9 +104,10 @@ void Controller::updatePlayerlist() {
     //    nearUnits.insert(crew.begin(), crew.end());
     //}
 
-    auto currentPlayers = sqf::all_players();
+    //auto currentPlayers = sqf::all_players();
+    auto currentPlayers = sqf::all_units();
 
-    std::unique_lock<std::mutex> lock(playersLock);
+    
 
     for (auto& it : currentPlayers) {
         
@@ -108,14 +116,21 @@ void Controller::updatePlayerlist() {
         });
 
         if (found == players.end()) {
+            std::unique_lock<std::mutex> lock(playersLock);
             auto& newPlayer = players.emplace_back(std::make_shared<PlayerInfo>(playerUpdateScheduler, it));
+            newPlayer->init();
         }
     }
 
     //Remove null players
-    players.erase(std::remove_if(players.begin(), players.end(), [](const std::shared_ptr<PlayerInfo>& info) {
+    auto newEnd = std::remove_if(players.begin(), players.end(), [](const std::shared_ptr<PlayerInfo>& info) {
         return info->unit.is_null();
-        }), players.end());
+        });
+    if (newEnd != players.end()) {
+        std::unique_lock<std::mutex> lock(playersLock);
+        players.erase(newEnd, players.end());
+    }
+    
 
 }
 
@@ -133,7 +148,7 @@ void Controller::threadWork() {
             it->simulate();
         }
 
-
+        std::this_thread::sleep_for(1ms);
 
 
 

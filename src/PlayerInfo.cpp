@@ -1,4 +1,5 @@
 #include "PlayerInfo.hpp"
+#include <utility>
 #include "CacheHelper.hpp"
 #include "Controller.hpp"
 
@@ -25,54 +26,86 @@ std::string vectorToString(const vector3& vec) {
 
 
 PlayerInfo::PlayerInfo(std::shared_ptr<MainthreadScheduler> sched, object unit) :
-
-    positionFunc(),
-    scheduler(sched),
+    scheduler(std::move(sched)),
     controlledUnit(unit),
     unit(unit),
     unitName(intercept::sqf::name(unit))
- 
-{
-    positionFunc = makeCachedVal<game_value>(200ms, [player = weak_from_this()]() -> game_value {
+     {
+    evt = __itt_event_create(unitName.c_str(), unitName.length());
+
+}
+
+void PlayerInfo::init() {
+    auto player = weak_from_this();
+    //If value doesn't change for a long time, you can reduce update frequency. Player standing still, sitting in same vehicle for long time
+    positionFunc = makeCachedVal<game_value>(500ms, [player]() -> game_value {
         if (auto lockedPlayer = player.lock())
             return intercept::sqf::get_variable(lockedPlayer->controlledUnit, "TF_fnc_position"sv);
         return {};
     }, game_value{});
 
-    position = makeCachedVal<PositionInfo>(1s, [player = weak_from_this()]()->PositionInfo {
+    positionFunc->setName(std::string("positionFunc ") + unitName);
+
+    position = makeCachedVal<PositionInfo>(50ms, [player]()->PositionInfo {
         if (auto lockedPlayer = player.lock())
             return lockedPlayer->getPosition();
         return {};
     }, {});
-    isSpectating = makeCachedVal<bool>(200ms, [player = weak_from_this()]() -> bool {
+    position->setName(std::string("position ") + unitName);
+    isSpectating = makeCachedVal<bool>(500ms, [player]() -> bool {
         if (auto lockedPlayer = player.lock())
             return intercept::sqf::get_variable(lockedPlayer->controlledUnit, "TFAR_forceSpectator"sv);
         return false;
     }, false);
-    unitParent = makeCachedVal<object>(200ms, [player = weak_from_this()]()->object {
+    isSpectating->setName(std::string("isSpectating ") + unitName);
+    unitParent = makeCachedVal<object>(200ms, [player]()->object {
         if (auto lockedPlayer = player.lock())
             return intercept::sqf::object_parent(lockedPlayer->controlledUnit);
         return {};
     }, {});
-    vehicleID = makeCachedVal<r_string>(1000ms, [player = weak_from_this()]()->r_string {
+    unitParent->setName(std::string("unitParent ") + unitName);
+    vehicleID = makeCachedVal<r_string>(1000ms, [player]()->r_string {
         if (auto lockedPlayer = player.lock())
             return lockedPlayer->getVehicleID();
         return {};
-    }, [player = weak_from_this()]()->bool {
-        if (auto lockedPlayer = player.lock()) //Only update if we are in a vehicle
-            return !lockedPlayer->unitParent->get().is_null();
-        return false;
+        }, [player]()->bool {
+            if (auto lockedPlayer = player.lock()) //Only update if we are in a vehicle
+                return !lockedPlayer->unitParent->get().is_null();
+            return false;
     }, {});
-
-    isolatedAndInside = makeCachedVal<bool>(200ms, [player = weak_from_this()]()->bool {
+    vehicleID->setName(std::string("vehicleID ") + unitName);
+    isolatedAndInside = makeCachedVal<bool>(200ms, [player]()->bool {
         if (auto lockedPlayer = player.lock())
             return lockedPlayer->getIsolatedAndInside();
         return {};
-    }, [player = weak_from_this()]()->bool {
-        if (auto lockedPlayer = player.lock()) //Only update if we are in a vehicle
-            return !lockedPlayer->unitParent->get().is_null();
-        return false;
+        }, [player]()->bool {
+            if (auto lockedPlayer = player.lock()) //Only update if we are in a vehicle
+                return !lockedPlayer->unitParent->get().is_null();
+            return false;
     }, game_value{});
+    isolatedAndInside->setName(std::string("isolatedAndInside ") + unitName);
+
+
+
+    terrainInterception = makeCachedVal<float>(2s, [player]()->float {
+        if (auto lockedPlayer = player.lock()) {
+            auto TFAR_fnc_calcTerrainInterception = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_calcTerrainInterception"sv);
+            return intercept::sqf::call(TFAR_fnc_calcTerrainInterception, lockedPlayer->controlledUnit);
+        }
+        return {};
+        }, game_value{});
+    terrainInterception->setName(std::string("terrainInterception ") + unitName);
+    
+    objectInterception = makeCachedVal<float>(50ms, [player]()->float {
+        if (auto lockedPlayer = player.lock()) {
+            auto TFAR_fnc_objectInterception = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_objectInterception"sv);
+
+            return intercept::sqf::call(TFAR_fnc_objectInterception, lockedPlayer->controlledUnit);
+        }
+        return {};
+    }, game_value{});
+    objectInterception->setName(std::string("objectInterception ") + unitName);
+
 
 
     //Immediately update vehicleID and isolatedAndInside on vehicle changed
@@ -87,8 +120,12 @@ PlayerInfo::PlayerInfo(std::shared_ptr<MainthreadScheduler> sched, object unit) 
 }
 
 void PlayerInfo::simulate() {
-    if (std::chrono::system_clock::now() - lastUpdateSent > 100ms)
+
+    //if (std::chrono::system_clock::now() - lastUpdateSent > 100ms) {
+        ittScopeEvt sc(evt);
         sendToTeamspeak();
+    //}
+       
 }
 
 void PlayerInfo::updateIntervals() {
@@ -133,15 +170,11 @@ void PlayerInfo::sendToTeamspeak() {
     if (nearPlayer) {
         
         if (isRemote && Controller::get().objectInterceptionEnabled->get()) {
-            auto TFAR_fnc_objectInterception = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_objectInterception"sv);
-            //#TODO 50ms+ caching
-            objectInterception = intercept::sqf::call(TFAR_fnc_objectInterception, controlledUnit);
+            objectInterception = this->objectInterception->get();
         }
 
     } else {
-        auto TFAR_fnc_calcTerrainInterception = CacheHelper::get().getMissionNamespaceVariable("TFAR_fnc_calcTerrainInterception"sv);
-        //#TODO 500ms+ caching
-        terrainInterception = intercept::sqf::call(TFAR_fnc_calcTerrainInterception, controlledUnit);
+        terrainInterception = this->terrainInterception->get();
     }
 
     bool isEnemy = false;
@@ -211,7 +244,7 @@ PositionInfo PlayerInfo::getPosition() const {
         return info;
     }
 
-    if (isSpectating.get()) {
+    if (isSpectating->get()) {
         auto pctw = intercept::sqf::position_camera_to_world({ 0,0,0 });
 
         PositionInfo info;
@@ -230,7 +263,7 @@ PositionInfo PlayerInfo::getPosition() const {
 }
 
 r_string PlayerInfo::getVehicleID() const {
-    object parent = unitParent.get();
+    object parent = unitParent->get();
 
     if (parent.is_null()) return "no"sv;
 
@@ -285,7 +318,7 @@ r_string PlayerInfo::getVehicleID() const {
 }
 
 bool PlayerInfo::getIsolatedAndInside() const {
-    object parent = unitParent.get();
+    object parent = unitParent->get();
 
     if (parent.is_null()) return false;
 
