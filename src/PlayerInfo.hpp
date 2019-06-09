@@ -51,7 +51,7 @@ public:
 
 #pragma endregion mainThreadFunctions
 
-
+    bool checkFlag = false; //Used by Controller.cpp
 
 
 

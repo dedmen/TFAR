@@ -174,7 +174,7 @@ void PlayerInfo::updateIntervals() {
 
     //#TODO move into cached value, and update interval on value update, or regularly
     updateSendDelay = timeInterp(distance, 50ms, 5s, 5, 5000);
-    position->setInterval(timeInterp(distance, 50ms, 5s, 5, 5000));
+    position->setInterval(timeInterp(distance, 50ms, 5s, 5, 5000)); //#TODO faster if in vehicle of currentUnit
     terrainInterception->setInterval(timeInterp(LAST_CHANGE(terrainInterception), 2s, 5s, 2s, 20s));
     objectInterception->setInterval(timeInterp(LAST_CHANGE(objectInterception), 100ms, 500ms, 1s, 5s));
 }

@@ -119,7 +119,8 @@ void Controller::updatePlayerlist() {
     auto currentPlayers = sqf::all_players();
     //auto currentPlayers = sqf::all_units();
 
-    
+    for (auto& it : players)
+        it->checkFlag = false;
 
     for (auto& it : currentPlayers) {
         
@@ -131,12 +132,15 @@ void Controller::updatePlayerlist() {
             std::unique_lock lock(playersLock);
             auto& newPlayer = players.emplace_back(std::make_shared<PlayerInfo>(playerUpdateScheduler, it));
             newPlayer->init();
+            newPlayer->checkFlag = true;
+        } else {
+            (*found)->checkFlag = true;
         }
     }
 
     //Remove null players
     auto newEnd = std::remove_if(players.begin(), players.end(), [](const std::shared_ptr<PlayerInfo>& info) {
-        return info->unit.is_null();
+        return info->unit.is_null() || !info->checkFlag;
         });
     if (newEnd != players.end()) {
         std::unique_lock lock(playersLock);
@@ -159,7 +163,8 @@ void Controller::threadWork() {
         std::unique_lock<std::mutex> lock(playersLock);
 
         for (auto& it : players) {
-            it->simulate();
+            if (it) //it happened once
+                it->simulate();
         }
 
         if (std::chrono::system_clock::now() - lastSpeakerUpdate > 200ms) {
@@ -167,7 +172,8 @@ void Controller::threadWork() {
             auto_array<r_string> radioData; //#TODO use std::string and vector
 
             for (auto& it : players)
-                it->grabRadios(radioData);
+                if (it)
+                    it->grabRadios(radioData);
 
             //#TODO add ground radios from cached value in controller
 
@@ -185,7 +191,7 @@ void Controller::threadWork() {
                 networkHandler.doAsyncRequest(data);
             lastSpeakerInfo = std::move(data);
         }
-
+        lock.unlock();
 
         std::this_thread::sleep_for(1ms);
 
