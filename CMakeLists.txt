@@ -3,11 +3,11 @@ cmake_minimum_required (VERSION 3.6)
 #----Make changes here
 
 #This is your project name. And also the filename of the resulting plugin.
-project (template-plugin)
+project (TFAR)
 
 #This setting enables the use of the engine string type instead of converting to std::string.
 #Enabling this results in better performance when handling strings to SQF commands.
-option(USE_ENGINE_TYPES "USE_ENGINE_TYPES" OFF)
+option(USE_ENGINE_TYPES "USE_ENGINE_TYPES" ON)
 
 #----Don't change anything below this line
 

@@ -1,6 +1,6 @@
 class CfgPatches {
-	class intercept_template_plugin { //Change this
-		name = "Intercept Template Plugin"; //Change this
+	class intercept_TFAR { //Change this
+		name = "Intercept TFAR"; //Change this
 		units[] = {};
 		weapons[] = {};
 		requiredVersion = 1.82;
@@ -15,8 +15,8 @@ class CfgPatches {
 };
 class Intercept {
     class Dedmen { //Change this. It's either the name of your project if you have more than one plugin. Or just your name.
-        class template_plugin { //Change this.
-            pluginName = "template-plugin"; //Change this.
+        class TFAR { //Change this.
+            pluginName = "TFAR"; //Change this.
         };
     };
 };
