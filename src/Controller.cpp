@@ -160,7 +160,7 @@ void Controller::threadWork() {
             continue;
         }
 
-        std::unique_lock<std::mutex> lock(playersLock);
+        std::shared_lock lock(playersLock);
 
         for (auto& it : players) {
             if (it) //it happened once
@@ -193,7 +193,7 @@ void Controller::threadWork() {
         }
         lock.unlock();
 
-        std::this_thread::sleep_for(1ms);
+        std::this_thread::sleep_for(10ms);
 
     }
 

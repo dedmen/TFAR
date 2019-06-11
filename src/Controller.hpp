@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <shared_mutex>
 #include <intercept.hpp>
 #include "PlayerInfo.hpp"
 #include "MainthreadScheduler.hpp"
@@ -40,7 +41,7 @@ public:
     CachedValueMTS<float> speakerDistance;
 
 
-    std::mutex playersLock;
+    std::shared_mutex playersLock;
 
     std::shared_ptr<PlayerInfo> currentUnit;
     std::vector<std::shared_ptr<PlayerInfo>> players;
